@@ -1,0 +1,14 @@
+Name:          simple
+Synopsis:      Primitive addressbook
+Version:       0.1
+License:       GPL
+License-file:  ../../LICENSE
+Author:   Cole Schlesinger <cschlesi@princeton.edu>
+
+Build-Depends:       base>3, hscurses >= 1.2, mtl, pretty
+Build-Type:          Simple
+
+Executable:          simple
+Main-Is:             Simple.hs
+ghc-options:         -funbox-strict-fields -threaded
+
