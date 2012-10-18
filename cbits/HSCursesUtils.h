@@ -6,6 +6,7 @@
 #include <stdlib.h>
 
 extern void hscurses_nomacro_getyx(WINDOW *win, int *y, int *x );
+extern void hscurses_nomacro_getmaxyx(WINDOW *win, int *y, int *x );
 
 extern chtype hs_curses_color_pair(HsInt pair );
 

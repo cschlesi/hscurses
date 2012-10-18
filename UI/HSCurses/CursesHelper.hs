@@ -37,7 +37,7 @@ module UI.HSCurses.CursesHelper (
         getKey,
 
         -- * Drawing
-        drawLine, drawCursor,
+        drawLine, wDrawLine, drawCursor, wDrawCursor,
 
         -- * Navigation
         gotoTop,
@@ -101,7 +101,7 @@ start = do
 #ifndef mingw32_HOST_OS
     where sigwinch sig key =
               do debug "SIGWINCH signal received"
-                 Curses.ungetCh key
+                 Curses.ungetch key
                  installHandler sig (Catch $ sigwinch sig key) Nothing
                  return ()
 #endif
@@ -149,17 +149,23 @@ getKey refresh = do
 -- | @drawLine n s@ draws @n@ characters of string @s@.
 --
 drawLine :: Int -> String -> IO ()
+drawLine w s =  wDrawLine Curses.stdScr w s
+
+wDrawLine :: Curses.Window -> Int -> String -> IO ()
 -- lazy version is faster than calculating length of s
-drawLine w s = Curses.wAddStr Curses.stdScr $! take w (s ++ repeat ' ')
+wDrawLine win w s = Curses.wAddStr win $! take w (s ++ repeat ' ')
 
 --
 -- | Draw the cursor at the given position.
 --
-drawCursor :: (Int,Int) -> (Int, Int) -> IO ()
-drawCursor (o_y,o_x) (y,x) = withCursor Curses.CursorVisible $ do
+drawCursor :: (Int, Int) -> (Int, Int) -> IO ()
+drawCursor off pos = wDrawCursor Curses.stdScr off pos
+
+wDrawCursor :: Curses.Window -> (Int, Int) -> (Int, Int) -> IO ()
+wDrawCursor win (o_y,o_x) (y,x) = withCursor Curses.CursorVisible $ do
     gotoTop
-    (h,w) <- scrSize
-    Curses.wMove Curses.stdScr (min (h-1) (o_y + y)) (min (w-1) (o_x + x))
+    (h,w) <- getYX win
+    Curses.wMove win (min (h-1) (o_y + y)) (min (w-1) (o_x + x))
 
 --
 -- | Move cursor to origin of stdScr.

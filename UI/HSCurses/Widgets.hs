@@ -102,10 +102,11 @@ mkDrawingStyle defStyle =
 
 defaultDrawingStyle :: DrawingStyle
 defaultDrawingStyle = mkDrawingStyle CursesH.defaultCursesStyle
-_draw :: DrawingHint -> DrawingStyle -> IO a -> IO a
-_draw DHActive sty io = CursesH.withStyle (dstyle_active sty) io
-_draw DHNormal sty io = CursesH.withStyle (dstyle_normal sty) io
-_draw DHFocus sty io = CursesH.withStyle (dstyle_focus sty) io
+
+_draw :: Curses.Window -> DrawingHint -> DrawingStyle -> IO a -> IO a
+_draw win DHActive sty io = CursesH.wWithStyle win (dstyle_active sty) io
+_draw win DHNormal sty io = CursesH.wWithStyle win (dstyle_normal sty) io
+_draw win DHFocus sty io = CursesH.wWithStyle win (dstyle_focus sty) io
 
 --
 -- Helper functions for scrolling
@@ -153,16 +154,22 @@ instance Widget EmptyWidget where
 -- An opaque widget
 --
 
-data OpaqueWidget = OpaqueWidget Size
+data OpaqueWidget = OpaqueWidget Curses.Window Size
 
 instance Widget OpaqueWidget where
-    draw (y,x) (h,w) _ _ =
+    draw (y,x) (h,w) _ (OpaqueWidget win _) =
         let draw' n =
-                do Curses.wMove Curses.stdScr (y+n) x
-                   CursesH.drawLine w ""
+                do Curses.wMove win (y+n) x
+                   CursesH.wDrawLine win w ""
         in do mapM draw' (take h [0..])
-              Curses.refresh
-    minSize (OpaqueWidget sz) = sz
+              Curses.wRefresh win
+    minSize (OpaqueWidget _ sz) = sz
+
+newOpaqueWidget :: Size -> OpaqueWidget
+newOpaqueWidget sz = newWOpaqueWidget Curses.stdScr sz
+
+newWOpaqueWidget :: Curses.Window -> Size -> OpaqueWidget
+newWOpaqueWidget win sz = OpaqueWidget win sz
 
 --
 -- Widget for text input
@@ -302,7 +309,7 @@ editWidgetSetOptions ew opts = ew { ew_options = opts }
 
 drawEditWidget :: Pos -> Size -> DrawingHint -> EditWidget -> IO ()
 drawEditWidget (y, x) (_, width) hint ew =
-    _draw hint (ewopt_style . ew_options $ ew) $
+    _draw Curses.stdScr hint (ewopt_style . ew_options $ ew) $
     do Curses.wMove Curses.stdScr y x
        CursesH.drawLine width (drop (ew_xoffset ew) $ ew_content ew)
        Curses.refresh
@@ -332,7 +339,7 @@ activateEditWidget refresh pos@(y, x) sz@(_, width) ew =
             oldContent = ew_content ew'
             newContent = take pos' oldContent ++ (c : drop pos' oldContent)
             in editWidgetGoRight' pos' sz (ew' { ew_content = newContent })
-    drawLocal ew' = _draw DHActive  (ewopt_style . ew_options $ ew') $
+    drawLocal ew' = _draw Curses.stdScr DHActive  (ewopt_style . ew_options $ ew') $
         do Curses.wMove Curses.stdScr y x
            CursesH.drawLine width (drop (ew_xoffset ew') $ ew_content ew')
            Curses.wMove Curses.stdScr y (x + ew_xcursor ew')
@@ -451,6 +458,7 @@ editWidgetHistory op ew =
 
 data TextWidget = TextWidget
     { tw_text           :: String,
+      tw_win            :: Curses.Window,
       tw_yoffset        :: Int,
       tw_xoffset        :: Int,
       tw_options        :: TextWidgetOptions
@@ -487,8 +495,12 @@ defaultTWOptions = TWOptions
                   twopt_halign = AlignLeft }
 
 newTextWidget :: TextWidgetOptions -> String -> TextWidget
-newTextWidget opts s = TextWidget
+newTextWidget opts s = newWTextWidget Curses.stdScr opts s
+
+newWTextWidget :: Curses.Window -> TextWidgetOptions -> String -> TextWidget
+newWTextWidget win opts s = TextWidget
                        { tw_text = s,
+                         tw_win = win,
                          tw_yoffset = 0,
                          tw_xoffset = 0,
                          tw_options = opts
@@ -498,20 +510,26 @@ drawTextWidget :: Pos -> Size -> DrawingHint -> TextWidget -> IO ()
 drawTextWidget (y, x) (height, width) hint tw =
     let ly = take height $ drop (tw_yoffset tw) (lines (tw_text tw))
         l = take height $ (map (drop (tw_xoffset tw)) ly ++ repeat [])
-        l' = map (align (twopt_halign $ tw_options tw) width ' ') l
+        l' = map (align (twopt_halign $ tw_options tw) (width - 1) ' ') l
     in --trace ("drawing text widget at " ++ show pos ++ " with size " ++ show sz) $
-       do _draw hint (twopt_style . tw_options $ tw)
+       do _draw (tw_win tw) hint (twopt_style . tw_options $ tw)
                       (mapM drawLine $ zip l' [0..])
-          Curses.refresh
+          Curses.wRefresh (tw_win tw)
     where drawLine (s, i) =
-              do Curses.wMove Curses.stdScr (y + i) x
-                 CursesH.drawLine width s
+              do Curses.wMove (tw_win tw) (y + i) x
+                 CursesH.wDrawLine (tw_win tw) (width - 1) s
 
 textWidgetGetText :: TextWidget -> String
 textWidgetGetText = tw_text
 
 textWidgetSetText :: TextWidget -> String -> TextWidget
 textWidgetSetText tw s = tw { tw_text = s }
+
+textWidgetGetWin :: TextWidget -> Curses.Window
+textWidgetGetWin tw = tw_win tw
+
+textWidgetSetWin :: TextWidget -> Curses.Window -> TextWidget
+textWidgetSetWin tw win = tw { tw_win = win }
 
 textWidgetScrollDown :: Size -> TextWidget -> TextWidget
 textWidgetScrollDown (h, _) tw =
@@ -527,13 +545,13 @@ textWidgetScrollUp (h, _) tw =
 
 textWidgetScrollLeft :: Size -> TextWidget -> TextWidget
 textWidgetScrollLeft (_, w) tw =
-    let dataLen = length $ lines (tw_text tw)
+    let dataLen = maximum . map length $ lines (tw_text tw)
         offset = tw_xoffset tw
         in tw { tw_xoffset = scrollBackward dataLen offset w }
 
 textWidgetScrollRight :: Size -> TextWidget -> TextWidget
 textWidgetScrollRight (_, w) tw =
-    let dataLen = length $ lines (tw_text tw)
+    let dataLen = maximum . map length $ lines (tw_text tw)
         offset = tw_xoffset tw
         in tw { tw_xoffset = scrollForward dataLen offset w }
 
@@ -662,7 +680,7 @@ tableWidgetDisplayInfo (height, width) tbw =
                            in (widths', m)
         dummyHeights = if heightDummy == 0 then [] else [heightDummy]
         dummyRows = if heightDummy == 0 then []
-                    else [map (\w -> TableCell (OpaqueWidget (heightDummy, w)))
+                    else [map (\w -> TableCell (OpaqueWidget Curses.stdScr (heightDummy, w)))
                           widths]
         in TBWDisplayInfo
                { tbwdisp_height = height
@@ -716,7 +734,7 @@ drawTableWidget (y, x) sz hint tbw =
         in do drawRows rows heights widths 0 firstVis hint
               case rightMargin of
                 Nothing -> return ()
-                Just (xoff,s) -> draw (y,x+xoff) s hint (OpaqueWidget s)
+                Just (xoff,s) -> draw (y,x+xoff) s hint (OpaqueWidget Curses.stdScr s)
               Curses.refresh
     where drawRows :: [Row] -> [Int] -> [Int] -> Int -> Int
                    -> DrawingHint -> IO ()

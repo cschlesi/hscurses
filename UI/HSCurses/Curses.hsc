@@ -53,6 +53,7 @@ module UI.HSCurses.Curses (
     Border(..),         -- data Border
     touchWin,
     newPad, pRefresh, delWin, newWin, wRefresh, wBorder, defaultBorder,
+    getMaxYX,
 
 
     -- * Refresh Routines
@@ -67,7 +68,7 @@ module UI.HSCurses.Curses (
     getYX,
 
     -- * Input
-    getCh, getch, decodeKey, ungetCh, keyResizeCode,
+    getCh, getch, decodeKey, ungetch, ungetCh, keyResizeCode,
 
     -- * Input Options
     cBreak,             -- :: Bool -> IO ()
@@ -78,14 +79,16 @@ module UI.HSCurses.Curses (
     noDelay,            -- :: Window -> Bool -> IO ()
 
     -- * Output
+    addStr,        -- :: String -> IO ()
     wAddStr,       -- :: Window -> String -> IO ()
-    addLn,         -- :: IO ()
     mvWAddStr,
+    addLn,         -- :: IO ()
     mvAddCh,       -- :: Int -> Int -> ChType -> IO ()
     wMove,
     bkgrndSet,     -- :: Attr -> Pair -> IO ()
     erase,         -- :: IO ()
-    wclear,        -- :: Window -> IO ()
+    clear,         -- :: IO ()
+    wClear,        -- :: Window -> IO ()
     clrToEol,      -- :: IO ()
     wClrToEol,
     beep,
@@ -813,6 +816,9 @@ normalise s = map f . filter (/= '\r') s
 
 ------------------------------------------------------------------------
 
+addStr :: String -> IO ()
+addStr str = wAddStr stdScr str
+
 #if defined(HAVE_WCHAR_H) && (defined(HAVE_LIBNCURSESW) || defined(HAVE_LIBPDCURSESW))
 
 --wAddStr :: Window -> String -> IO ()
@@ -895,8 +901,13 @@ erase :: IO ()
 erase = throwIfErr_ "erase" $ werase_c  stdScr
 foreign import ccall unsafe "werase" werase_c :: Window -> IO CInt
 
-wclear :: Window -> IO ()
-wclear w = throwIfErr_ "wclear" $ wclear_c  w
+-- |Clear the default screen.
+clear :: IO ()
+clear = wClear stdScr
+
+-- |Clear the window.
+wClear :: Window -> IO ()
+wClear w = throwIfErr_ "wclear" $ wclear_c  w
 foreign import ccall unsafe "wclear" wclear_c :: Window -> IO CInt
 
 clrToEol :: IO ()
@@ -972,7 +983,7 @@ foreign import ccall unsafe "HSCurses.h curs_set"
     curs_set :: CInt -> IO CInt
 
 --
--- | Get the current cursor coordinates
+-- | Get the current cursor coordinates.
 --
 getYX :: Window -> IO (Int, Int)
 getYX w =
@@ -993,6 +1004,27 @@ getYX w =
 --
 foreign import ccall unsafe "HSCursesUtils.h hscurses_nomacro_getyx"
         nomacro_getyx :: Window -> Ptr CInt -> Ptr CInt -> IO ()
+
+--
+-- | Get the window dimensions.
+--
+getMaxYX :: Window -> IO (Int, Int)
+getMaxYX w =
+    alloca $ \py ->                 -- allocate two ints on the stack
+        alloca $ \px -> do
+            nomacro_getmaxyx w py px   -- writes current cursor coords
+            y <- peek py
+            x <- peek px
+            return (fromIntegral y, fromIntegral x)
+
+--
+-- | Get the window dimensions, written into the two argument ints.
+--
+--      void getmaxyx(WINDOW *win, int y, int x);
+--
+foreign import ccall unsafe "HSCursesUtils.h hscurses_nomacro_getmaxyx"
+        nomacro_getmaxyx :: Window -> Ptr CInt -> Ptr CInt -> IO ()
+
 
 ------------------------------------------------------------------------
 
@@ -1059,7 +1091,12 @@ foreign import ccall unsafe
 foreign import ccall unsafe
     wborder :: Window -> CChar -> CChar -> CChar -> CChar -> CChar -> CChar -> CChar -> CChar -> IO CInt
 
-newWin :: Int -> Int -> Int -> Int -> IO Window
+-- |Create a new window.
+newWin :: Int           -- ^Height.
+       -> Int           -- ^Width.
+       -> Int           -- ^Y position.
+       -> Int           -- ^X position.
+       -> IO Window
 newWin nlines ncolumn begin_y begin_x = throwIfNull "newwin" $
     newwin (fi nlines) (fi ncolumn) (fi begin_y) (fi begin_x)
 
@@ -1221,6 +1258,107 @@ decodeKey key = case key of
 #endif
     _                          -> KeyUnknown (fromIntegral key)
 
+encodeKey :: Key -> CInt
+encodeKey key = case key of
+    KeyChar c                  -> CInt (fromIntegral $ ord c)
+    KeyBreak -> (#const KEY_BREAK)         
+    KeyDown -> (#const KEY_DOWN)          
+    KeyUp -> (#const KEY_UP)            
+    KeyLeft -> (#const KEY_LEFT)          
+    KeyRight -> (#const KEY_RIGHT)         
+    KeyHome -> (#const KEY_HOME)          
+    KeyBackspace -> (#const KEY_BACKSPACE)     
+    KeyF c -> CInt $ fromIntegral (c + #const KEY_F0)
+    KeyDL -> (#const KEY_DL)            
+    KeyIL -> (#const KEY_IL)            
+    KeyDC -> (#const KEY_DC)            
+    KeyIC -> (#const KEY_IC)            
+    KeyEIC -> (#const KEY_EIC)           
+    KeyClear -> (#const KEY_CLEAR)         
+    KeyEOS -> (#const KEY_EOS)           
+    KeyEOL -> (#const KEY_EOL)           
+    KeySF -> (#const KEY_SF)            
+    KeySR -> (#const KEY_SR)            
+    KeyNPage -> (#const KEY_NPAGE)         
+    KeyPPage -> (#const KEY_PPAGE)         
+    KeySTab -> (#const KEY_STAB)          
+    KeyCTab -> (#const KEY_CTAB)          
+    KeyCATab -> (#const KEY_CATAB)         
+    KeyEnter -> (#const KEY_ENTER)         
+    KeySReset -> (#const KEY_SRESET)        
+    KeyReset -> (#const KEY_RESET)         
+    KeyPrint -> (#const KEY_PRINT)         
+    KeyLL -> (#const KEY_LL)            
+    KeyA1 -> (#const KEY_A1)            
+    KeyA3 -> (#const KEY_A3)            
+    KeyB2 -> (#const KEY_B2)            
+    KeyC1 -> (#const KEY_C1)            
+    KeyC3 -> (#const KEY_C3)            
+    KeyBTab -> (#const KEY_BTAB)          
+    KeyBeg -> (#const KEY_BEG)           
+    KeyCancel -> (#const KEY_CANCEL)        
+    KeyClose -> (#const KEY_CLOSE)         
+    KeyCommand -> (#const KEY_COMMAND)       
+    KeyCopy -> (#const KEY_COPY)          
+    KeyCreate -> (#const KEY_CREATE)        
+    KeyEnd -> (#const KEY_END)           
+    KeyExit -> (#const KEY_EXIT)          
+    KeyFind -> (#const KEY_FIND)          
+    KeyHelp -> (#const KEY_HELP)          
+    KeyMark -> (#const KEY_MARK)          
+    KeyMessage -> (#const KEY_MESSAGE)       
+    KeyMove -> (#const KEY_MOVE)          
+    KeyNext -> (#const KEY_NEXT)          
+    KeyOpen -> (#const KEY_OPEN)          
+    KeyOptions -> (#const KEY_OPTIONS)       
+    KeyPrevious -> (#const KEY_PREVIOUS)      
+    KeyRedo -> (#const KEY_REDO)          
+    KeyReference -> (#const KEY_REFERENCE)     
+    KeyRefresh -> (#const KEY_REFRESH)       
+    KeyReplace -> (#const KEY_REPLACE)       
+    KeyRestart -> (#const KEY_RESTART)       
+    KeyResume -> (#const KEY_RESUME)        
+    KeySave -> (#const KEY_SAVE)          
+    KeySBeg -> (#const KEY_SBEG)          
+    KeySCancel -> (#const KEY_SCANCEL)       
+    KeySCommand -> (#const KEY_SCOMMAND)      
+    KeySCopy -> (#const KEY_SCOPY)         
+    KeySCreate -> (#const KEY_SCREATE)       
+    KeySDC -> (#const KEY_SDC)           
+    KeySDL -> (#const KEY_SDL)           
+    KeySelect -> (#const KEY_SELECT)        
+    KeySEnd -> (#const KEY_SEND)          
+    KeySEOL -> (#const KEY_SEOL)          
+    KeySExit -> (#const KEY_SEXIT)         
+    KeySFind -> (#const KEY_SFIND)         
+    KeySHelp -> (#const KEY_SHELP)         
+    KeySHome -> (#const KEY_SHOME)         
+    KeySIC -> (#const KEY_SIC)           
+    KeySLeft -> (#const KEY_SLEFT)         
+    KeySMessage -> (#const KEY_SMESSAGE)      
+    KeySMove -> (#const KEY_SMOVE)         
+    KeySNext -> (#const KEY_SNEXT)         
+    KeySOptions -> (#const KEY_SOPTIONS)      
+    KeySPrevious -> (#const KEY_SPREVIOUS)     
+    KeySPrint -> (#const KEY_SPRINT)        
+    KeySRedo -> (#const KEY_SREDO)         
+    KeySReplace -> (#const KEY_SREPLACE)      
+    KeySRight -> (#const KEY_SRIGHT)        
+    KeySRsume -> (#const KEY_SRSUME)        
+    KeySSave -> (#const KEY_SSAVE)         
+    KeySSuspend -> (#const KEY_SSUSPEND)      
+    KeySUndo -> (#const KEY_SUNDO)         
+    KeySuspend -> (#const KEY_SUSPEND)       
+    KeyUndo -> (#const KEY_UNDO)
+#ifdef KEY_RESIZE
+    KeyResize -> (#const KEY_RESIZE)        
+#endif
+#ifdef KEY_MOUSE
+    KeyMouse -> (#const KEY_MOUSE)         
+#endif
+    KeyUnknown k -> fromIntegral k
+
+
 keyResizeCode :: Maybe CInt
 #ifdef KEY_RESIZE
 keyResizeCode = Just (#const KEY_RESIZE)
@@ -1248,10 +1386,15 @@ cTRUE = #const TRUE
 -- get char
 --
 
+ungetCh :: Key -> IO ()
+ungetCh key = do
+  let i = encodeKey key
+  ungetch i
+
 -- ncurses ungetch and Haskell's threadWaitRead do not work together well.
 -- So I decided to implement my own input queue.
-ungetCh :: (Integral a) => a -> IO ()
-ungetCh i =
+ungetch :: (Integral a) => a -> IO ()
+ungetch i =
     do debug "ungetCh called"
        writeChan inputBuf (BufDirect (fi i))
 

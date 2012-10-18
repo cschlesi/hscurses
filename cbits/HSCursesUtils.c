@@ -10,6 +10,11 @@ void hscurses_nomacro_getyx(WINDOW *win, int *y, int *x)
     getyx(win, *y, *x);
 }
 
+void hscurses_nomacro_getmaxyx(WINDOW *win, int *y, int *x)
+{
+    getmaxyx(win, *y, *x);
+}
+
 chtype hs_curses_color_pair(HsInt pair)
 {
     return COLOR_PAIR (pair);
