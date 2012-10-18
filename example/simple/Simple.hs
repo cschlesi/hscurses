@@ -5,7 +5,7 @@ import UI.HSCurses.CursesHelper
 import UI.HSCurses.Widgets
 import Data.List
 
-type Widgets = (TextWidget, TextWidget, TextWidget, TextWidget)
+type Widgets = (TextWidget, TextWidget, TextWidget, EditWidget)
 
 data MainState
   = TopWidget
@@ -20,11 +20,11 @@ refreshAll (topW, midW, botW, cmdW) state = do
   topSize <- getMaxYX $ textWidgetGetWin topW
   midSize <- getMaxYX $ textWidgetGetWin midW
   botSize <- getMaxYX $ textWidgetGetWin botW
-  cmdSize <- getMaxYX $ textWidgetGetWin cmdW
-  let topHint = case state of { TopWidget -> DHFocus; _ -> DHNormal }
-  let midHint = case state of { MidWidget -> DHFocus; _ -> DHNormal }
-  let botHint = case state of { BotWidget -> DHFocus; _ -> DHNormal }
-  let cmdHint = case state of { CmdWidget -> DHFocus; _ -> DHNormal }
+  cmdSize <- getMaxYX $ editWidgetGetWin cmdW
+  let topHint = case state of { TopWidget -> DHActive; _ -> DHNormal }
+  let midHint = case state of { MidWidget -> DHActive; _ -> DHNormal }
+  let botHint = case state of { BotWidget -> DHActive; _ -> DHNormal }
+  let cmdHint = case state of { CmdWidget -> DHActive; _ -> DHNormal }
   refresh
   draw (0,0) topSize topHint topW
   draw (0,0) midSize midHint midW
@@ -33,7 +33,7 @@ refreshAll (topW, midW, botW, cmdW) state = do
   wRefresh $ textWidgetGetWin topW
   wRefresh $ textWidgetGetWin midW
   wRefresh $ textWidgetGetWin botW
-  wRefresh $ textWidgetGetWin cmdW
+  wRefresh $ editWidgetGetWin cmdW
 
 mainEventLoop :: Widgets -> MainState -> IO ()
 mainEventLoop widgets@(topW, midW, botW, cmdW) state = do
@@ -99,8 +99,21 @@ handleBotKey widgets@(topW, midW, botW, cmdW) key = do
 
 handleCmdKey :: Widgets -> Key -> IO (Widgets)
 handleCmdKey widgets@(topW, midW, botW, cmdW) key = do
-  cmdW <- doScroll key cmdW
-  return (topW, midW, botW, cmdW)
+  size <- getMaxYX $ editWidgetGetWin cmdW
+  ungetCh key
+  cursSet CursorVisible
+  (cmdW', cmd) <- activate (wRefresh $ editWidgetGetWin cmdW) (0,0) size cmdW
+  cursSet CursorInvisible
+
+  -- Was a command entered or ^w?  "" indicates a command.
+  let widgets' = (topW, midW, botW, cmdW')
+  case editWidgetGetContent cmdW' of
+    ""  -> doCmd widgets' cmd
+    _ -> return widgets'
+
+
+doCmd :: Widgets -> String -> IO (Widgets)
+doCmd widgets _ = return widgets
 
 
 -- |If key is a scroll key, return an updated widget.  Otherwise, return the 
@@ -154,10 +167,22 @@ initializeWidgets state = do
   move (botWinY + botHeight) 0
   drawLine width $ repeat '-'
 
-  -- Again, add some whitespace for aesthetics.
+  -- This is where we initialize the edit widget.
   let cmdWinY = botWinY + botHeight + 2
-  cmdWin <- newWin 1 width cmdWinY 0
-  let cmdW = newWTextWidget cmdWin defaultTWOptions textWide
+  let editWidgetFinishETB a b c = do
+      ungetCh $ KeyChar '\ETB'
+      res <- editWidgetFinish a b c
+      return res
+  let ewKeyHandlers = (ewopt_keyHandlers defaultEWOptions) 
+                   ++ [ (KeyChar '\ETB', editWidgetFinishETB)
+                      , (KeyChar '\n', editWidgetFinishAndClear) ]
+  let ewOpts = defaultEWOptions { ewopt_keyHandlers = ewKeyHandlers }
+  cmdWin <- newWin 1 width cmdWinY 2
+  let cmdW = newWEditWidget cmdWin ewOpts ""
+
+  -- Start the cmd line with '$'
+  move cmdWinY 0
+  addStr "$ "
 
   let widgets = (topW, midW, botW, cmdW)
   refreshAll widgets state
@@ -172,6 +197,7 @@ main = do
   cBreak True
   keypad stdScr True
   echo False
+  cursSet CursorInvisible
   clear
   refresh
 

@@ -177,6 +177,7 @@ newWOpaqueWidget win sz = OpaqueWidget win sz
 
 data EditWidget = EditWidget
     { ew_content       :: String,
+      ew_win           :: Curses.Window,
       ew_xoffset       :: Int, -- content!!xoffset is the 1st char shown
       ew_xcursor       :: Int, -- cursor position
       ew_history       :: [String],
@@ -209,10 +210,14 @@ defaultEWOptions = EWOptions
                    }
 
 newEditWidget :: EditWidgetOptions -> String -> EditWidget
-newEditWidget opts =
+newEditWidget opts str = newWEditWidget Curses.stdScr opts str
+
+newWEditWidget :: Curses.Window -> EditWidgetOptions -> String -> EditWidget
+newWEditWidget win opts =
     editWidgetSetContent
       (EditWidget
        { ew_content = "",
+         ew_win     = win,
          ew_xoffset = 0,
          ew_xcursor = 0,
          ew_history = [],
@@ -291,6 +296,12 @@ editWidgetKeyHandlers =
      (Curses.KeyDown, editWidgetHistoryDown)
     ]
 
+editWidgetGetWin :: EditWidget -> Curses.Window
+editWidgetGetWin ew = ew_win ew
+
+editWidgetSetWin :: EditWidget -> Curses.Window -> EditWidget
+editWidgetSetWin ew win = ew { ew_win = win }
+
 editWidgetGetContent :: EditWidget -> String
 editWidgetGetContent ew = ew_content ew
 editWidgetSetContent :: EditWidget
@@ -309,10 +320,10 @@ editWidgetSetOptions ew opts = ew { ew_options = opts }
 
 drawEditWidget :: Pos -> Size -> DrawingHint -> EditWidget -> IO ()
 drawEditWidget (y, x) (_, width) hint ew =
-    _draw Curses.stdScr hint (ewopt_style . ew_options $ ew) $
-    do Curses.wMove Curses.stdScr y x
-       CursesH.drawLine width (drop (ew_xoffset ew) $ ew_content ew)
-       Curses.refresh
+    _draw (ew_win ew) hint (ewopt_style . ew_options $ ew) $
+    do Curses.wMove (ew_win ew) y x
+       CursesH.wDrawLine (ew_win ew) (width - 1) (drop (ew_xoffset ew) $ ew_content ew)
+       Curses.wRefresh $ ew_win ew
 
 activateEditWidget :: MonadExcIO m => m () -> Pos -> Size
                    -> EditWidget -> m (EditWidget, String)
@@ -339,11 +350,11 @@ activateEditWidget refresh pos@(y, x) sz@(_, width) ew =
             oldContent = ew_content ew'
             newContent = take pos' oldContent ++ (c : drop pos' oldContent)
             in editWidgetGoRight' pos' sz (ew' { ew_content = newContent })
-    drawLocal ew' = _draw Curses.stdScr DHActive  (ewopt_style . ew_options $ ew') $
-        do Curses.wMove Curses.stdScr y x
-           CursesH.drawLine width (drop (ew_xoffset ew') $ ew_content ew')
-           Curses.wMove Curses.stdScr y (x + ew_xcursor ew')
-           Curses.refresh
+    drawLocal ew' = _draw (ew_win ew') DHActive  (ewopt_style . ew_options $ ew') $
+        do Curses.wMove (ew_win ew') y x
+           CursesH.wDrawLine (ew_win ew') (width - 1) (drop (ew_xoffset ew') $ ew_content ew')
+           Curses.wMove (ew_win ew') y (x + ew_xcursor ew')
+           Curses.wRefresh $ ew_win ew'
 
 editWidgetGoLeft' :: t -> t1 -> EditWidget -> EditWidget
 editWidgetGoLeft' _ _ ew =
@@ -404,6 +415,10 @@ editWidgetGoEnd' pos sz ew =
 
 editWidgetFinish :: (Monad m) => t -> t1 -> EditWidget -> m (Cont EditWidget)
 editWidgetFinish _ _ ew =  return (Done (addToHistory ew (ew_content ew)))
+
+editWidgetFinishAndClear :: (Monad m) => t -> t1 -> EditWidget -> m (Cont EditWidget)
+editWidgetFinishAndClear _ _ ew = 
+  return (Done $ (addToHistory ew (ew_content ew)) { ew_content = "" })
 
 maxHistoryLength :: Int
 maxHistoryLength = 50
